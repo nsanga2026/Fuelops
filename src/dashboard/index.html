@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AEG Fuels | Dispatch Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="./output.css" />
+</head>
+<body class="min-h-screen bg-[#e8edf4] text-[#0b1320]">
+  <div id="root" class="min-h-screen"></div>
+  <script type="module">
+    import React from 'https://esm.sh/react@18.3.1?dev';
+    import ReactDOM from 'https://esm.sh/react-dom@18.3.1/client?dev';
+    import htm from 'https://esm.sh/htm@3.1.1?dev';
+    import {
+      Camera,
+      FileText,
+      FolderOpen,
+      FilePlus,
+      Send,
+      Download,
+      Eye,
+      FileArchive,
+      Upload
+    } from 'https://esm.sh/lucide-react@0.261.0?dev';
+
+    const STORAGE_KEY = 'aeg-dispatch-orders';
+
+    const getPersistedOrders = () => {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return [];
+        return JSON.parse(raw);
+      } catch (error) {
+        console.error('Failed to parse saved orders', error);
+        return [];
+      }
+    };
+
+    const formatTimestamp = () => new Date().toLocaleString('en-US', { hour12: false });
+
+    const createOrderId = () => `AEG-${Date.now().toString().slice(-6)}`;
+
+    const html = htm.bind(React.createElement);
+
+    const App = () => {
+      const [orders, setOrders] = React.useState(getPersistedOrders);
+      const [draft, setDraft] = React.useState({ bol: '', documentUrl: '', memo: '' });
+      const [geo, setGeo] = React.useState({ lat: 'Fetching...', lon: 'Fetching...' });
+      const [detailOrderId, setDetailOrderId] = React.useState(null);
+      const [zoom, setZoom] = React.useState(1);
+      const [message, setMessage] = React.useState('');
+      const [selectedIds, setSelectedIds] = React.useState(() => orders.map((order) => order.id));
+      const uploadRef = React.useRef(null);
+      const cameraRef = React.useRef(null);
+
+      React.useEffect(() => {
+        navigator.geolocation?.getCurrentPosition(
+          (position) => {
+            setGeo({
+              lat: position.coords.latitude.toFixed(5),
+              lon: position.coords.longitude.toFixed(5)
+            });
+          },
+          () => {
+            setGeo({ lat: '35.6580', lon: '-97.4745' });
+          }
+        );
+      }, []);
+
+      React.useEffect(() => {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
+        setSelectedIds(orders.map((order) => order.id));
+      }, [orders]);
+
+      const handleFileSelection = (files) => {
+        const file = files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () =>
+          setDraft((prev) => ({ ...prev, documentUrl: reader.result || '', fileName: file.name }));
+        reader.readAsDataURL(file);
+      };
+
+      const saveOrder = () => {
+        if (!draft.bol.trim()) {
+          setMessage('BOL/Invoice number is required.');
+          return;
+        }
+        const next = {
+          id: createOrderId(),
+          bol: draft.bol.trim(),
+          date: formatTimestamp(),
+          location: `${geo.lat}, ${geo.lon}`,
+          documentUrl: draft.documentUrl,
+          memo: draft.memo,
+          completed: true
+        };
+        setOrders((prev) => [next, ...prev]);
+        setDraft({ bol: '', documentUrl: '', memo: '' });
+        setMessage('Order saved. Scroll down to view it in the list.');
+      };
+
+      const openDetail = (id) => {
+        setDetailOrderId(id);
+        setZoom(1);
+      };
+
+      const exportCsv = () => {
+        if (!orders.length) {
+          setMessage('No orders to export.');
+          return;
+        }
+        const header = ['Order ID', 'BOL/Invoice', 'Date', 'Location'];
+        const rows = orders.map((order) => [order.id, order.bol, order.date, order.location]);
+        const csv = [header, ...rows].map((row) => row.join(',')).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.download = 'aeg-orders.csv';
+        link.href = url;
+        link.click();
+        URL.revokeObjectURL(url);
+        setMessage('CSV exported');
+      };
+
+      const saveJson = () => {
+        const blob = new Blob([JSON.stringify(orders, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'aeg-orders.json';
+        a.click();
+        URL.revokeObjectURL(url);
+        setMessage('JSON file saved locally');
+      };
+
+      const attachAndSend = () => {
+        if (!selectedIds.length) {
+          setMessage('Select at least one order before sending.');
+          return;
+        }
+        const payload = orders.filter((order) => selectedIds.includes(order.id));
+        console.info('Prepared payload for send:', payload);
+        setMessage(`${payload.length} order(s) attached and queued for sending.`);
+      };
+
+      const detailOrder = orders.find((order) => order.id === detailOrderId);
+
+      return html`
+        <div className="min-h-screen bg-[#e8edf4] text-slate-900">
+          <header className="bg-aegNavy text-white px-6 py-4 shadow-2xl">
+            <div className="max-w-7xl mx-auto flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.4em] text-slate-200">AEG Fuels Dispatch</p>
+                <h1 className="text-2xl font-semibold">Dispatch Portal</h1>
+              </div>
+              <div className="flex items-center gap-2 text-sm">
+                <span className="px-3 py-1 border border-white/40 rounded-full">User: Admin</span>
+                <span className="text-slate-200">Order Management</span>
+              </div>
+            </div>
+          </header>
+
+          <main className="max-w-7xl mx-auto py-8 px-4 space-y-6">
+            <section className="bg-white rounded-2xl shadow-lg border border-slate-200 p-5">
+              <p className="text-sm text-slate-500 uppercase tracking-[0.4em]">Dashboard</p>
+              <div className="mt-2 flex flex-wrap gap-3 text-sm font-semibold text-aegNavy">
+                <span className="bg-[#031a39] text-white px-3 py-1 rounded-full">Dashboard</span>
+                <span className="text-slate-400">&gt;</span>
+                <span>Order Management</span>
+              </div>
+            </section>
+
+            <section className="grid gap-6 lg:grid-cols-3">
+              <div className="bg-white shadow-xl rounded-2xl border border-slate-200 p-6 flex flex-col gap-4">
+                <div className="flex items-center gap-2 text-lg font-semibold text-aegNavy">
+                  <${FilePlus} className="text-[1.3em]" /> Create Order
+                </div>
+                <label className="text-sm font-medium text-slate-600">BOL / Invoice Number</label>
+                <input
+                  value=${draft.bol}
+                  onChange=${(event) => setDraft((prev) => ({ ...prev, bol: event.target.value }))}
+                  className="border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-safetyOrange"
+                  placeholder="Enter BOL or invoice #"
+                />
+                <div className="space-y-3 text-sm">
+                  <div>
+                    <p className="text-slate-500">Date / Time</p>
+                    <input
+                      value=${formatTimestamp()}
+                      readOnly
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 bg-slate-50 text-[0.95em]"
+                    />
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Geo-Location (auto)</p>
+                    <input
+                      value=${`${geo.lat}, ${geo.lon}`}
+                      readOnly
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 bg-slate-50 text-[0.95em]"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Document Upload</p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:border-slate-400"
+                      onClick=${() => uploadRef.current?.click()}
+                    >
+                      <${Upload} className="mr-2" /> Upload File
+                    </button>
+                    <button
+                      type="button"
+                      className="flex-1 rounded-lg border border-safetyOrange bg-safetyOrange/10 px-3 py-2 text-sm font-semibold text-safetyOrange"
+                      onClick=${() => cameraRef.current?.click()}
+                    >
+                      <${Camera} className="mr-2" /> Activate Camera
+                    </button>
+                  </div>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    ref=${uploadRef}
+                    onChange=${(event) => handleFileSelection(event.target.files)}
+                  />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    ref=${cameraRef}
+                    onChange=${(event) => handleFileSelection(event.target.files)}
+                  />
+                  ${draft.documentUrl && html`
+                    <div className="relative aspect-[4/3] w-full rounded-xl border border-slate-200 overflow-hidden bg-slate-50">
+                      <img
+                        src=${draft.documentUrl}
+                        alt="Order preview"
+                        className="h-full w-full object-contain"
+                      />
+                      <span className="absolute bottom-2 right-2 rounded-full bg-white/90 px-2 text-[0.65em] font-semibold tracking-wide text-slate-500">
+                        ${draft.fileName || 'Uploaded'}
+                      </span>
+                    </div>
+                  `}
+                </div>
+                <textarea
+                  value=${draft.memo}
+                  onChange=${(event) => setDraft((prev) => ({ ...prev, memo: event.target.value }))}
+                  placeholder="Notes for the carrier..."
+                  rows=${3}
+                  className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-safetyOrange"
+                ></textarea>
+                <button
+                  className="mt-auto rounded-2xl bg-safetyOrange px-4 py-3 text-sm font-bold uppercase tracking-wider text-white shadow-lg transition hover:bg-[#ec5800]"
+                  onClick=${saveOrder}
+                >
+                  Save Order
+                </button>
+              </div>
+
+              <div className="bg-white shadow-xl rounded-2xl border border-slate-200 p-6 flex flex-col gap-4">
+                <div className="flex items-center gap-2 text-lg font-semibold text-aegNavy">
+                  <${FileText} className="text-[1.3em]" /> View Orders
+                </div>
+                <div className="text-sm text-slate-500">Click to see the captured document alongside the order details.</div>
+                <div className="space-y-3 max-h-[32rem] overflow-y-auto pr-2">
+                  ${!orders.length
+                    ? html`<p className="text-slate-400">No orders yet. Create one to start.</p>`
+                    : orders.map((order) => html`
+                      <button
+                        key=${order.id}
+                        className="w-full rounded-xl border border-slate-200 px-4 py-3 text-left shadow-sm transition hover:border-safetyOrange/70"
+                        onClick=${() => openDetail(order.id)}
+                      >
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-sm font-semibold text-slate-900">${order.bol}</h3>
+                          <span className="flex items-center gap-1 text-xs text-slate-500">
+                            <${Eye} className="text-[0.85em]" /> View Document
+                          </span>
+                        </div>
+                        <p className="text-[0.85em] text-slate-500">${order.date}</p>
+                      </button>
+                    `)
+                  }
+                </div>
+              </div>
+
+              <div className="bg-white shadow-xl rounded-2xl border border-slate-200 p-6 flex flex-col gap-4">
+                <div className="flex items-center gap-2 text-lg font-semibold text-aegNavy">
+                  <${FolderOpen} className="text-[1.3em]" /> Send Details
+                </div>
+                <div className="text-sm text-slate-500">Tap a completed order to include it in the export.</div>
+                <div className="space-y-3 max-h-[28rem] overflow-y-auto pr-2">
+                  ${!orders.length
+                    ? html`<p className="text-slate-400">No completed orders available yet.</p>`
+                    : orders.map((order) => html`
+                      <label
+                        key=${order.id}
+                        className="flex items-center gap-3 rounded-xl border border-slate-200 px-4 py-3 text-sm shadow-sm transition hover:border-safetyOrange/70"
+                      >
+                        <input
+                          type="checkbox"
+                          checked=${selectedIds.includes(order.id)}
+                          onChange=${(event) => {
+                            setSelectedIds((prev) =>
+                              event.target.checked ? [...prev, order.id] : prev.filter((id) => id !== order.id)
+                            );
+                          }}
+                          className="h-4 w-4 rounded border-slate-300 text-safetyOrange focus:ring-safetyOrange"
+                        />
+                        <div className="flex-1">
+                          <p className="font-semibold text-slate-900">${order.bol}</p>
+                          <p className="text-[0.78em] text-slate-500">${order.date}</p>
+                        </div>
+                        <span className="text-[0.7em] text-slate-400">#${order.id.split('-')[1]}</span>
+                      </label>
+                    `)
+                  }
+                </div>
+                <div className="space-y-3 pt-2">
+                  <button
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-safetyOrange/70"
+                    onClick=${exportCsv}
+                  >
+                    <${Send} className="text-slate-500" /> Export CSV
+                  </button>
+                  <button
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl border border-safetyOrange bg-safetyOrange/10 px-4 py-3 text-sm font-semibold text-safetyOrange"
+                    onClick=${attachAndSend}
+                  >
+                    <${FileArchive} className="text-safetyOrange" /> Attach Documents & Send
+                  </button>
+                  <button
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-safetyOrange/70"
+                    onClick=${saveJson}
+                  >
+                    <${Download} className="text-slate-500" /> Save File
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            ${message && html`
+              <div className="rounded-xl border border-slate-300 bg-white/80 px-4 py-3 text-sm text-slate-600 shadow">
+                ${message}
+              </div>
+            `}
+          </main>
+
+          ${detailOrder && html`
+            <div className="fixed inset-0 bg-black/50 z-30 flex items-center justify-center px-4">
+              <div className="w-full max-w-4xl rounded-3xl border border-white/40 bg-white p-6 shadow-2xl">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.5em] text-slate-400">Order Detail</p>
+                    <h2 className="text-2xl font-semibold text-aegNavy">${detailOrder.bol}</h2>
+                    <p className="text-sm text-slate-500">${detailOrder.date} - ${detailOrder.location}</p>
+                  </div>
+                  <button
+                    className="rounded-full border border-slate-200 px-3 py-1 text-sm font-semibold"
+                    onClick=${() => setDetailOrderId(null)}
+                  >
+                    Close
+                  </button>
+                </div>
+                <div className="mt-5 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-sm font-semibold text-slate-600">Document Viewer</p>
+                    <div className="mt-3 flex items-center gap-3">
+                      <label className="text-xs uppercase tracking-[0.5em] text-slate-400">Zoom</label>
+                      <input
+                        type="range"
+                        min="1"
+                        max="2"
+                        step="0.05"
+                        value=${zoom}
+                        onChange=${(event) => setZoom(parseFloat(event.target.value))}
+                        className="w-full"
+                      />
+                    </div>
+                    <div className="relative mt-4 aspect-[4/3] w-full overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                      ${detailOrder.documentUrl
+                        ? html`
+                          <img
+                            src=${detailOrder.documentUrl}
+                            alt="Order document"
+                            className="h-full w-full object-contain transition-transform"
+                            style=${{ transform: `scale(${zoom})`, transition: 'transform 0.2s ease-out' }}
+                          />
+                        `
+                        : html`
+                          <div className="flex h-full items-center justify-center text-sm text-slate-400">
+                            No document preview available
+                          </div>
+                        `}
+                    </div>
+                  </div>
+                  <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <p className="text-sm font-semibold uppercase tracking-[0.3em] text-slate-400">Details</p>
+                    <dl className="space-y-3 text-sm text-slate-600">
+                      <div>
+                        <dt className="font-semibold text-slate-800">Order ID</dt>
+                        <dd>${detailOrder.id}</dd>
+                      </div>
+                      <div>
+                        <dt className="font-semibold text-slate-800">Location</dt>
+                        <dd>${detailOrder.location}</dd>
+                      </div>
+                      <div>
+                        <dt className="font-semibold text-slate-800">Memo</dt>
+                        <dd>${detailOrder.memo || '-'}</dd>
+                      </div>
+                    </dl>
+                    <button
+                      className="mt-4 w-full rounded-2xl bg-aegNavy px-4 py-3 text-sm font-semibold uppercase tracking-[0.4em] text-white"
+                      onClick=${() => setDetailOrderId(null)}
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          `}
+        </div>
+      `;
+    };
+
+    const root = document.getElementById('root');
+    ReactDOM.createRoot(root).render(React.createElement(App));
+  </script>
+</body>
+</html>
